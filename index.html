@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Code Error Detector</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080c14;color:#e5edfa;font-family:monospace}
+header{padding:16px;background:#101827;border-bottom:1px solid #26364d}
+h2{margin:0;color:#55aaff}
+main{padding:15px;max-width:1100px;margin:auto}
+textarea{width:100%;height:300px;background:#080d16;color:#d5e5ff;border:1px solid #293c55;border-radius:8px;padding:14px;font:14px/1.5 monospace;resize:vertical;outline:none;tab-size:2}
+textarea:focus{border-color:#2585ff}
+button{padding:11px 17px;border:0;border-radius:6px;background:#2585ff;color:white;font-weight:bold;cursor:pointer;margin:10px 5px 10px 0}
+button:hover{background:#1267d6}
+.panel{background:#101827;border:1px solid #26364d;border-radius:8px;padding:12px;margin-top:12px}
+h3{margin:0 0 12px}
+#logs{max-height:360px;overflow:auto;background:#080d16;padding:8px;border-radius:6px}
+.log{padding:9px;margin:6px 0;border-radius:5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.error{background:#3b1118;color:#ff9299;border-left:4px solid #ff394d}
+.warn{background:#392b0d;color:#ffd36a;border-left:4px solid #ffb82e}
+.info{background:#102c42;color:#71c5ff;border-left:4px solid #2585ff}
+.success{background:#103326;color:#63efb0;border-left:4px solid #2ddc91}
+small{color:#93a5bc}
+#preview{width:100%;height:320px;border:1px solid #293c55;border-radius:5px;background:white}
+.status{display:inline-block;padding:5px 9px;border-radius:4px;background:#102c42;color:#71c5ff;margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<header>
+<h2>CODE ERROR DETECTOR</h2>
+<small>HTML · CSS · JavaScript | Live Preview & Diagnostic Terminal</small>
+</header>
+
+<main>
+<div class="panel">
+<h3>Code Editor</h3>
+
+<textarea id="code" spellcheck="false"><h1>Hello World</h1>
+
+<button onclick="testError()">Test Error</button>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+h1 {
+  color: #267fe8;
+}
+</style>
+
+<script>
+console.log("Program berjalan");
+console.warn("Contoh warning");
+
+function testError() {
+  unknownFunction();
+}
+</script></textarea>
+
+<br>
+<button id="runBtn">RUN CODE</button>
+<button id="checkBtn">CHECK CODE</button>
+<button id="clearBtn">CLEAR LOGS</button>
+
+<div>
+<small>Preview otomatis diperbarui saat kamu mengetik.</small>
+</div>
+</div>
+
+<div class="panel">
+<h3>Terminal / Error & Warning</h3>
+<div id="status" class="status">READY</div>
+<div id="logs" aria-live="polite">
+<div class="log info">[INFO] Editor siap digunakan.</div>
+</div>
+</div>
+
+<div class="panel">
+<h3>Live Output</h3>
+<iframe id="preview" title="Live output" sandbox="allow-scripts"></iframe>
+</div>
+</main>
+
+<script>
+"use strict";
+
+const editor = document.getElementById("code");
+const logs = document.getElementById("logs");
+const preview = document.getElementById("preview");
+const statusEl = document.getElementById("status");
+
+let updateTimer;
+let runId = 0;
+
+function log(type, message) {
+  const item = document.createElement("div");
+  item.className = "log " + type;
+  item.textContent = message;
+
+  logs.prepend(item);
+
+  while (logs.children.length > 250) {
+    logs.lastElementChild.remove();
+  }
+}
+
+function clearLogs() {
+  logs.replaceChildren();
+}
+
+function setStatus(message) {
+  statusEl.textContent = message;
+}
+
+function suggestFix(message) {
+  const m = String(message).toLowerCase();
+
+  if (
+    m.includes("is not defined") ||
+    m.includes("not defined") ||
+    m.includes("can't find variable")
+  ) {
+    return "Periksa ejaan nama variabel atau fungsi. Pastikan sudah didefinisikan sebelum digunakan.";
+  }
+
+  if (
+    m.includes("is not a function") ||
+    m.includes("not a function")
+  ) {
+    return "Objek yang dipanggil bukan fungsi. Periksa nama fungsi dan nilai variabel.";
+  }
+
+  if (
+    m.includes("cannot read properties") ||
+    m.includes("cannot read property")
+  ) {
+    return "Objek mungkin null atau undefined. Periksa objek sebelum mengakses propertinya.";
+  }
+
+  if (
+    m.includes("unexpected token") ||
+    m.includes("unterminated") ||
+    m.includes("missing )") ||
+    m.includes("invalid or unexpected token")
+  ) {
+    return "Periksa tanda kurung (), kurawal {}, tanda kutip, dan sintaks di sekitar lokasi error.";
+  }
+
+  if (m.includes("promise")) {
+    return "Tangani Promise dengan .catch() atau gunakan try/catch di fungsi async.";
+  }
+
+  return "Baca pesan error. Periksa nama variabel, sintaks, dan baris kode terkait.";
+}
+
+function createMonitor(id) {
+  return `
+<script>
+(function() {
+  const runId = ${id};
+
+  function send(type, message, line, column) {
+    parent.postMessage({
+      source: "code-detector",
+      runId: runId,
+      type: type,
+      message: String(message),
+      line: line || null,
+      column: column || null
+    }, "*");
+  }
+
+  window.onerror = function(message, source, line, column) {
+    send("error", message, line, column);
+    return false;
+  };
+
+  window.addEventListener("unhandledrejection", function(event) {
+    const reason = event.reason && event.reason.message
+      ? event.reason.message
+      : event.reason;
+
+    send("error", "Unhandled Promise rejection: " + reason);
+  });
+
+  ["log", "info", "warn", "error"].forEach(function(level) {
+    const original = console[level].bind(console);
+
+    console[level] = function() {
+      const message = Array.from(arguments).map(function(value) {
+        if (typeof value === "string") return value;
+
+        try {
+          return JSON.stringify(value);
+        } catch (_) {
+          return String(value);
+        }
+      }).join(" ");
+
+      if (level === "warn") {
+        send("warn", message);
+      } else if (level === "error") {
+        send("error", message);
+      } else {
+        send("info", message);
+      }
+
+      original.apply(console, arguments);
+    };
+  });
+})();
+<\/script>`;
+}
+
+function injectMonitor(code, monitor) {
+  if (/<head\b[^>]*>/i.test(code)) {
+    return code.replace(
+      /<head\b[^>]*>/i,
+      tag => tag + monitor
+    );
+  }
+
+  if (/<html\b[^>]*>/i.test(code)) {
+    return code.replace(
+      /<html\b[^>]*>/i,
+      tag => tag + "<head>" + monitor + "</head>"
+    );
+  }
+
+  return monitor + code;
+}
+
+function runCode(clear = true) {
+  clearTimeout(updateTimer);
+
+  if (clear) {
+    clearLogs();
+  }
+
+  const id = ++runId;
+  const code = editor.value;
+  const monitor = createMonitor(id);
+
+  preview.srcdoc = injectMonitor(code, monitor);
+
+  setStatus("RUNNING #" + id);
+  log("success", "[RUN] Kode dikirim ke sandbox.");
+}
+
+function scheduleLiveUpdate() {
+  clearTimeout(updateTimer);
+
+  updateTimer = setTimeout(function() {
+    runCode(true);
+  }, 500);
+}
+
+function checkCode() {
+  clearLogs();
+
+  const code = editor.value;
+  let issues = 0;
+
+  function issue(type, message) {
+    log(type, message);
+    issues++;
+  }
+
+  // Pemeriksaan tag HTML dasar.
+  const html = code
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+
+  const tags = [...html.matchAll(
+    /<\/?([a-z][\w-]*)\b[^>]*>/gi
+  )];
+
+  const stack = [];
+
+  const voidTags = new Set([
+    "area", "base", "br", "col", "embed", "hr",
+    "img", "input", "link", "meta", "param",
+    "source", "track", "wbr"
+  ]);
+
+  for (const match of tags) {
+    const full = match[0];
+    const name = match[1].toLowerCase();
+
+    if (full.startsWith("</")) {
+      if (voidTags.has(name)) {
+        issue(
+          "warn",
+          "[HTML WARNING] Tag void </" + name + "> biasanya tidak diperlukan."
+        );
+      } else if (stack.includes(name)) {
+        if (stack[stack.length - 1] !== name) {
+          issue(
+            "warn",
+            "[HTML WARNING] Urutan tag penutup </" + name + "> mungkin salah."
+          );
+        }
+
+        stack.splice(stack.lastIndexOf(name), 1);
+      } else {
+        issue(
+          "error",
+          "[HTML ERROR] Tag </" + name + "> tidak memiliki pasangan pembuka."
+        );
+      }
+    } else if (
+      !voidTags.has(name) &&
+      !/\/\s*>$/.test(full)
+    ) {
+      stack.push(name);
+    }
+  }
+
+  for (const name of stack) {
+    issue(
+      "warn",
+      "[HTML WARNING] Tag <" + name + "> mungkin belum ditutup."
+    );
+  }
+
+  // Pemeriksaan sintaks JavaScript inline.
+  const scripts = [...code.matchAll(
+    /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi
+  )];
+
+  for (const match of scripts) {
+    if (/\bsrc\s*=/i.test(match[1])) {
+      log(
+        "info",
+        "[INFO] JavaScript eksternal tidak diperiksa oleh parser lokal ini."
+      );
+      continue;
+    }
+
+    try {
+      new Function(match[2]);
+    } catch (error) {
+      issue(
+        "error",
+        "[JAVASCRIPT SYNTAX ERROR] " + error.message +
+        "\nSaran: " + suggestFix(error.message)
+      );
+    }
+  }
+
+  if (/\beval\s*\(/.test(code)) {
+    issue(
+      "warn",
+      "[SECURITY WARNING] eval() terdeteksi. Jangan jalankan kode dari sumber tak tepercaya."
+    );
+  }
+
+  if (/\bconsole\.log\s*\(/.test(code)) {
+    log(
+      "info",
+      "[INFO] console.log() terdeteksi. Hasilnya muncul saat kode dijalankan."
+    );
+  }
+
+  if (issues === 0) {
+    log(
+      "success",
+      "[CHECK OK] Tidak ditemukan masalah oleh pemeriksaan sederhana ini. Ini bukan jaminan bebas bug."
+    );
+    setStatus("CHECK OK");
+  } else {
+    log(
+      "info",
+      "[CHECK SELESAI] Total temuan: " + issues
+    );
+    setStatus("ISSUES: " + issues);
+  }
+}
+
+// Pesan hanya diterima dari iframe preview yang sedang digunakan.
+window.addEventListener("message", function(event) {
+  if (event.source !== preview.contentWindow) return;
+
+  const data = event.data;
+
+  if (
+    !data ||
+    data.source !== "code-detector" ||
+    data.runId !== runId
+  ) {
+    return;
+  }
+
+  const type = ["error", "warn", "info"].includes(data.type)
+    ? data.type
+    : "info";
+
+  let message = "[" + type.toUpperCase() + "] " + data.message;
+
+  if (data.line) {
+    message += " (baris " + data.line;
+
+    if (data.column) {
+      message += ", kolom " + data.column;
+    }
+
+    message += ")";
+  }
+
+  log(type, message);
+
+  if (type === "error") {
+    log(
+      "warn",
+      "[SARAN PERBAIKAN] " + suggestFix(data.message)
+    );
+
+    setStatus("RUNTIME ERROR");
+  }
+});
+
+document.getElementById("runBtn").addEventListener("click", function() {
+  runCode(true);
+});
+
+document.getElementById("checkBtn").addEventListener("click", checkCode);
+
+document.getElementById("clearBtn").addEventListener("click", clearLogs);
+
+editor.addEventListener("input", scheduleLiveUpdate);
+
+// Jalankan contoh awal.
+runCode(true);
+</script>
+
+</body>
+</html>
